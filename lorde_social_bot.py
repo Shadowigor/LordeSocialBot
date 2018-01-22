@@ -6,39 +6,85 @@ import json
 import re
 import requests
 import tweepy
+import logging
 import telegram
 from telegram.ext import Updater
 from telegram.ext import CommandHandler
 
+DEBUG = True
 subscribers = []
-sub_file = "subscribers"
-secret_file = "secret"
+sub_file = "/opt/lorde_social_bot/subscribers"
+secret_file = "/opt/lorde_social_bot/secret"
+admin_id = None
 
 def telegram_start(bot, update):
     global subscribers
+    global DEBUG
     chat_id = update.message.chat_id
     if not chat_id in subscribers:
         subscribers.append(chat_id)
-        bot.send_message(chat_id = chat_id, text = "Hello! From now on, I will keep you informed whenever Ella tweets or likes something! You can unsubscribe again with /stop.")
+        bot.send_message(chat_id = chat_id, text = "Hello! From now on, I will keep you informed whenever Ella tweets, likes on Twitter or posts on Instagram! You can unsubscribe again with /stop.")
+        if DEBUG:
+            message = "Somebody subscribed: "
+            if update.message.chat.first_name is not None:
+                message += update.message.chat.first_name + " "
+            if update.message.chat.last_name is not None:
+                message += update.message.chat.last_name + " "
+            if update.message.chat.title is not None:
+                message += update.message.chat.title + " "
+            if update.message.chat.username is not None:
+                message += "(@" + update.message.chat.username + ")"
+            print(message)
+        with open(sub_file, "wb") as fp:
+            pickle.dump(subscribers, fp)
     else:
         bot.send_message(chat_id = chat_id, text = "I have already started!")
-    with open(sub_file, "wb") as fp:
-        pickle.dump(subscribers, fp)
 
 def telegram_stop(bot, update):
     global subscribers
+    global DEBUG
     chat_id = update.message.chat_id
-    subscribers.remove(chat_id)
-    with open(sub_file, "wb") as fp:
-        pickle.dump(subscribers, fp)
-    bot.send_message(chat_id = chat_id, text = "You have successfully unsubscribed. Bye!")
+    if chat_id in subscribers:
+        subscribers.remove(chat_id)
+        bot.send_message(chat_id = chat_id, text = "You have successfully unsubscribed. Bye!")
+        if DEBUG:
+            message = "Somebody unsubscribed: "
+            if update.message.chat.first_name is not None:
+                message += update.message.chat.first_name + " "
+            if update.message.chat.last_name is not None:
+                message += update.message.chat.last_name + " "
+            if update.message.chat.title is not None:
+                message += update.message.chat.title + " "
+            if update.message.chat.username is not None:
+                message += "(@" + update.message.chat.username + ")"
+            print(message)
+        with open(sub_file, "wb") as fp:
+            pickle.dump(subscribers, fp)
 
 def telegram_help(bot, update):
-    bot.send_message(chat_id = update.message.chat_id, text = "Available commands\n\n\\start  Start the bot\n\\stop  Stop the bot")
+    bot.send_message(chat_id = update.message.chat_id, text = "Available commands\n\n/start  Start the bot\n/stop   Stop the bot")
+
+def telegram_userlist(bot, update):
+    global subscribers
+    global admin_id
+    if str(update.message.chat_id) == admin_id:
+        message = "A list of all current subscribers:\n"
+        for sub in subscribers:
+            chat = bot.getChat(chat_id = sub)
+            message += " - "
+            if chat.first_name is not None:
+                message += chat.first_name + " "
+            if chat.last_name is not None:
+                message += chat.last_name + " "
+            if chat.title is not None:
+                message += chat.title + " "
+            if chat.username is not None:
+                message += "(@" + chat.username + ")"
+            message += "\n"
+        bot.send_message(chat_id = admin_id, text = message)
 
 def get_insta_pics():
-    #response = requests.get("https://instagram.com/lordemusic/")
-    response = requests.get("https://instagram.com/test65814308954/")
+    response = requests.get("https://instagram.com/lordemusic/")
     regex = re.search('<script type="text/javascript">window\._sharedData = (.*);</script>', response.text).group(1)
     j = json.loads(regex)
     nodes = j["entry_data"]["ProfilePage"][0]["user"]["media"]["nodes"]
@@ -46,6 +92,8 @@ def get_insta_pics():
 
 def main():
     global subscribers
+    global DEBUG
+    global admin_id
     print("Starting up...")
     with open(secret_file, "r") as fp:
         for line in fp:
@@ -63,7 +111,9 @@ def main():
             if entry[0] == "instagram_username:":
                 instagram_username = entry[1][:-1]
             if entry[0] == "instagram_password:":
-                instagram_password= entry[1][:-1]
+                instagram_password = entry[1][:-1]
+            if entry[0] == "admin_id:":
+                admin_id = entry[1][:-1]
 
     # === Twitter initialization ===
     print("Initializing Twitter API...")
@@ -87,7 +137,7 @@ def main():
     # === Telegram initialization ===
     print("Initializing Telegram API...")
     updater = Updater(token = telegram_token)
-
+    logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.WARNING)
     dispatcher = updater.dispatcher
     start_handler = CommandHandler("start", telegram_start)
     start_handler_ex = CommandHandler("start@lordesocialbot", telegram_start)
@@ -95,17 +145,21 @@ def main():
     stop_handler_ex = CommandHandler("stop@lordesocialbot", telegram_stop)
     help_handler = CommandHandler("help", telegram_help)
     help_handler_ex = CommandHandler("help@lordesocialbot", telegram_help)
+    userlist_handler = CommandHandler("userlist", telegram_userlist)
+    userlist_handler_ex = CommandHandler("userlist@lordesocialbot", telegram_userlist)
     dispatcher.add_handler(start_handler)
     dispatcher.add_handler(start_handler_ex)
     dispatcher.add_handler(stop_handler)
     dispatcher.add_handler(stop_handler_ex)
     dispatcher.add_handler(help_handler)
     dispatcher.add_handler(help_handler_ex)
+    dispatcher.add_handler(userlist_handler)
+    dispatcher.add_handler(userlist_handler_ex)
     try:
-        with open("subscribers", "rb") as fp:
+        with open(sub_file, "rb") as fp:
             subscribers = pickle.load(fp)
     except FileNotFoundError:
-        with open("subscribers", "w") as fp:
+        with open(sub_file, "w") as fp:
             pass
     except IOError as e:
         print("There was some error opening the subscribers file: " + e)
@@ -159,14 +213,20 @@ def main():
             for tweet in reversed(new_tweets):
                 for sub in subscribers:
                     updater.bot.send_message(chat_id = sub, text = "Ella tweeted something!\nhttps://twitter.com/lorde/status/" + tweet)
+                    if DEBUG:
+                        print("Ella tweeted something!: https://twitter.com/lorde/status/" + tweet)
 
             for fav in reversed(new_favs):
                 for sub in subscribers:
                     updater.bot.send_message(chat_id = sub, text = "Ella liked something!\nhttps://twitter.com/lorde/status/" + fav)
+                    if DEBUG:
+                        print("Ella liked something!: https://twitter.com/lorde/status/" + fav)
 
             for pic in reversed(new_insta_pics):
                 for sub in subscribers:
                     updater.bot.send_message(chat_id = sub, text = "Ella posted something!\nhttps://instagram.com/p/" + pic)
+                    if DEBUG:
+                        print("Ella posted something!: https://instagram.com/p/" + pic)
 
             # Rate limit of tweets is 1500/15min and for favorites it is
             # 75/15min. If we, in the worst case, send a request all 15s,

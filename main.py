@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 
-from config import Config
-from instagram import Instagram
-from twitter import Twitter
-from telegram import Telegram
+import logging
+from lordesocialbot.config import Config
+from lordesocialbot.instagram import Instagram
+from lordesocialbot.twitter import Twitter
+from lordesocialbot.telegram import Telegram
 from time import time, sleep
-from sys import argv
+from sys import argv, stdout
 
 def main():
     # You might have to adjust that path depending on how you run/install the
@@ -17,10 +18,21 @@ def main():
 
     try:
         config = Config(config_path)
-        instagram = Instagram()
+    except (ConfigMissingException, KeyError):
+        return
+
+    log = logging.getLogger("LordeSocialBot")
+    log.setLevel(config.loglevel)
+    handler = logging.handlers.StreamHandler()
+    log.addHandler(handler)
+    handler = logging.handlers.FileHandler(config.logfile)
+    log.addHandler(handler)
+
+    try:
+        instagram = Instagram(config.instagram_username)
         twitter = Twitter(config)
         telegram = Telegram(config)
-    except (ConfigMissingException, KeyError):
+    except PermissionError:
         return
 
     # So we know the name of the person we're monitoring
@@ -43,17 +55,17 @@ def main():
 
             for pic in reversed(new_insta_pics):
                 telegram.send_to_all("{0} posted something!: https://instagram.com/p/{1}".format(name, pic))
-                
+
             # The rate limit of tweets is 1500/15min and for favorites it is
             # 75/15min. If we send a request all 15s, or 60/15min, we should
             # be fine. As we scrape the Instagram data manually and not via the
             # API, we shouldn't hit a rate limit there, especially not with
             # those values.
             delay = time.time() - timestamp
-            if(delay > 0)
+            if delay > 0:
                 sleep(15 - delay)
     except KeyboardInterrupt:
-        print("\nExiting")
+        log.info("\nExiting")
         telegram.stop()
 
 if __name__ == "__main__":

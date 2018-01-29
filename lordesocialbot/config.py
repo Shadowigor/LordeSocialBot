@@ -2,21 +2,30 @@
 
 import logging
 import pickle
+from sys import stderr
 
 class ConfigMissingException(Exception):
     pass
 
 class Config:
-    def __init__(config_file):
+    def __init__(self, config_file):
+        # A list of all configs that are expected to be found in the config
+        # file. If the config is read successfully, you will have a variable
+        # self.CONNFIG_NAME with the appropriate value afterwards.
         configs = [
             "twitter_user_id",
             "tweet_load_count",
-            "admin_id",
+            "admins",
             "verbosity",
             "subscribers_file",
-            "secret_file"
+            "secret_file",
+            "target_real_name",
+            "instagram_username",
+            "bot_name",
+            "logfile"
         ]
 
+        # Same as for the configs but with the secrets file
         secrets = [
             "twitter_consumer_key",
             "twitter_consumer_secret",
@@ -25,14 +34,15 @@ class Config:
             "telegram_token"
         ]
 
+        # Define the meaning of the different verbosity levels
         verbosity_levels = {
-            "debug":  logging.DEBUG
-            "info": logging.INFO
-            "warning": logging.WARNING
-            "error": logging.ERROR
-            "critical": logging.CRITICAL
-            "quiet": logging.CRITICAL
-            "silent": logging.CRITICAL
+            "debug":  logging.DEBUG,
+            "info": logging.INFO,
+            "warning": logging.WARNING,
+            "error": logging.ERROR,
+            "critical": logging.CRITICAL,
+            "quiet": logging.CRITICAL,
+            "silent": logging.CRITICAL,
             "none": logging.CRITICAL
         }
 
@@ -47,7 +57,7 @@ class Config:
         # Make sure all configs are specified
         if configs != []:
             for config in configs:
-                print("Error: Missing config: {0}".format(config), file = sys.stderr)
+                print("Error: Missing config: {0}".format(config), file = stderr)
             raise ConfigMissingException
 
         # Load secrets
@@ -61,7 +71,7 @@ class Config:
         # Make sure all secrets are specified
         if secrets != []:
             for secret in secrets:
-                print("Error: Missing config: {0}".format(secret), file = sys.stderr)
+                print("Error: Missing config: {0}".format(secret), file = stderr)
             raise ConfigMissingException
 
         # Translate the verbosity string to the appropriate number
@@ -70,6 +80,9 @@ class Config:
         except KeyError:
             print("Unknown verbosity level: {0}".format(self.verbosity))
             raise
+
+        # Expand list of admins
+        self.admins = self.admins.split(" ")
 
         # Load subscribers
         try:
@@ -81,6 +94,6 @@ class Config:
         except EOFError:
             pass
 
-    def save_subscribers():
+    def save_subscribers(self):
         with open(self.subscribers_file, "wb") as fp:
             pickle.dump(self.subscribers, fp)

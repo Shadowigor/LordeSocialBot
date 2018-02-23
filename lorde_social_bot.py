@@ -5,6 +5,8 @@ import pickle
 import json
 import re
 import requests
+import time
+import traceback
 import tweepy
 import logging
 import telegram
@@ -71,7 +73,7 @@ def telegram_userlist(bot, update):
         message = "A list of all current subscribers:\n"
         for sub in subscribers:
             chat = bot.getChat(chat_id = sub)
-            message += " - "
+            message += " - {0}: ".format(sub)
             if chat.first_name is not None:
                 message += chat.first_name + " "
             if chat.last_name is not None:
@@ -85,7 +87,10 @@ def telegram_userlist(bot, update):
 
 def get_insta_pics():
     response = requests.get("https://instagram.com/lordemusic/")
-    regex = re.search('<script type="text/javascript">window\._sharedData = (.*);</script>', response.text).group(1)
+    regex_full = re.search('<script type="text/javascript">window\._sharedData = (.*);</script>', response.text)
+    if regex_full is None:
+        return None
+    regex = regex_full .group(1)
     j = json.loads(regex)
     nodes = j["entry_data"]["ProfilePage"][0]["user"]["media"]["nodes"]
     return [node["code"] for node in nodes]
@@ -118,7 +123,8 @@ def main():
     # === Twitter initialization ===
     print("Initializing Twitter API...")
     twitter_user_id = 355307031
-    tweet_count = 50
+    tweet_count = 10
+    telegram_max_retries = 5
 
     auth = tweepy.OAuthHandler(twitter_consumer_key, twitter_consumer_secret)
     auth.set_access_token(twitter_access_token, twitter_access_token_secret)
@@ -132,7 +138,9 @@ def main():
 
     # === Instagram initialization
     print("Initializing Instagram API...")
-    old_insta_pics = get_insta_pics()
+    old_insta_pics = None
+    while old_insta_pics is None:
+        old_insta_pics = get_insta_pics()
 
     # === Telegram initialization ===
     print("Initializing Telegram API...")
@@ -165,8 +173,9 @@ def main():
         print("There was some error opening the subscribers file: " + e)
     except EOFError:
         pass
-    updater.start_polling()
+    updater.start_polling(timeout = 0, read_latency = 5)
 
+    log = open("/tmp/lorde_social_bot.log", "w")
     print("Starting main loop...")
     running = True
     while running:
@@ -190,6 +199,10 @@ def main():
                     new_tweets.append(tweet_id)
                 current_tweets.append(tweet_id)
 
+            log.write(time.strftime("%d.%m.%Y %H:%M:%S\n"))
+            log.write("  Old tweets: {0}\n".format(old_tweets))
+            log.write("  Current tweets: {0}\n".format(current_tweets))
+            log.write("  New tweets: {0}\n\n".format(new_tweets))
             old_tweets = current_tweets
 
             # Same for favorites
@@ -199,6 +212,10 @@ def main():
                     new_favs.append(fav_id)
                 current_favs.append(fav_id)
 
+            log.write(time.strftime("%d.%m.%Y %H:%M:%S\n"))
+            log.write("  Old favs: {0}\n".format(old_favs))
+            log.write("  Current favs: {0}\n".format(current_favs))
+            log.write("  New favs: {0}\n\n".format(new_favs))
             old_favs = current_favs
 
             # === Instagram part ===
@@ -206,27 +223,73 @@ def main():
             new_insta_pics = []
 
             current_insta_pics = get_insta_pics()
-            new_insta_pics = [pic for pic in current_insta_pics if not pic in old_insta_pics]
-            old_insta_pics = current_insta_pics
+            if current_insta_pics is None:
+                log.write("  Could not fetch Instagram pictures\n")
+            else:
+                new_insta_pics = [pic for pic in current_insta_pics if not pic in old_insta_pics]
+                log.write(time.strftime("%d.%m.%Y %H:%M:%S\n"))
+                log.write("  Old insta pics: {0}\n".format(old_insta_pics))
+                log.write("  Current insta pics: {0}\n".format(current_insta_pics))
+                log.write("  New insta pics: {0}\n\n".format(new_insta_pics))
+                old_insta_pics = current_insta_pics
 
             # === Telegram part ===
             for tweet in reversed(new_tweets):
+                if DEBUG:
+                    print("Ella tweeted something!: https://twitter.com/lorde/status/" + tweet)
                 for sub in subscribers:
-                    updater.bot.send_message(chat_id = sub, text = "Ella tweeted something!\nhttps://twitter.com/lorde/status/" + tweet)
-                    if DEBUG:
-                        print("Ella tweeted something!: https://twitter.com/lorde/status/" + tweet)
+                    trying = telegram_max_retries
+                    while trying > 0:
+                        try:
+                            updater.bot.send_message(chat_id = sub, text = "Ella tweeted something!\nhttps://twitter.com/lorde/status/" + tweet)
+                            trying = 0
+                        except telegram.error.TelegramError as e:
+                            print("TelegramError ({0})".format(sub))
+                        except telegram.error.TimedOut as e:
+                            print("TimedOut ({0})".format(sub))
+#                            traceback.print_exc()
+                        except telegram.error.NetworkError as e:
+                            print("NetworkError ({0})".format(sub))
+#                            traceback.print_exc()
+                        trying -= 1
 
             for fav in reversed(new_favs):
+                if DEBUG:
+                    print("Ella liked something!: https://twitter.com/lorde/status/" + fav)
                 for sub in subscribers:
-                    updater.bot.send_message(chat_id = sub, text = "Ella liked something!\nhttps://twitter.com/lorde/status/" + fav)
-                    if DEBUG:
-                        print("Ella liked something!: https://twitter.com/lorde/status/" + fav)
+                    trying = telegram_max_retries
+                    while trying > 0:
+                        try:
+                            updater.bot.send_message(chat_id = sub, text = "Ella liked something!\nhttps://twitter.com/lorde/status/" + fav)
+                            trying = 0
+                        except telegram.error.TelegramError as e:
+                            print("TelegramError ({0})".format(sub))
+                        except telegram.error.TimedOut as e:
+                            print("TimedOut ({0})".format(sub))
+#                            traceback.print_exc()
+                        except telegram.error.NetworkError as e:
+                            print("NetworkError ({0})".format(sub))
+#                            traceback.print_exc()
+                        trying -= 1
 
             for pic in reversed(new_insta_pics):
+                if DEBUG:
+                    print("Ella posted something!: https://instagram.com/p/" + pic)
                 for sub in subscribers:
-                    updater.bot.send_message(chat_id = sub, text = "Ella posted something!\nhttps://instagram.com/p/" + pic)
-                    if DEBUG:
-                        print("Ella posted something!: https://instagram.com/p/" + pic)
+                    trying = telegram_max_retries
+                    while trying > 0:
+                        try:
+                            updater.bot.send_message(chat_id = sub, text = "Ella posted something!\nhttps://instagram.com/p/" + pic)
+                            trying = 0
+                        except telegram.error.TelegramError as e:
+                            print("TelegramError ({0})".format(sub))
+                        except telegram.error.TimedOut as e:
+                            print("TimedOut ({0})".format(sub))
+#                            traceback.print_exc()
+                        except telegram.error.NetworkError as e:
+                            print("NetworkError ({0})".format(sub))
+#                            traceback.print_exc()
+                        trying -= 1
 
             # Rate limit of tweets is 1500/15min and for favorites it is
             # 75/15min. If we, in the worst case, send a request all 15s,
@@ -237,6 +300,17 @@ def main():
             print("\nExiting")
             updater.stop()
             running = False
+        except tweepy.error.TweepError as e:
+            print("TweepError")
+            traceback.print_exc()
+        except tweepy.error.RateLimitError as e:
+            print("TwitterRateLimitError")
+            traceback.print_exc()
+        except requests.exceptions.RequestException as e:
+            print("InstagramRequestException")
+            traceback.print_exc()
+    log.close()
 
 if __name__ == "__main__":
+#    sleep(30) # Make absolutely sure the network is up
     main()
